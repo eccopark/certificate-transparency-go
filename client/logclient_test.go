@@ -1,4 +1,4 @@
-// Copyright 2014 Google Inc. All Rights Reserved.
+// Copyright 2014 Google LLC. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -528,34 +528,6 @@ func TestAddPreChain(t *testing.T) {
 	_, err = lc.AddPreChain(context.Background(), chain)
 	if err != nil {
 		t.Errorf("AddPreChain()=nil,%v; want sct,nil", err)
-	}
-}
-
-func TestAddJSON(t *testing.T) {
-	hs := serveRspAt(t, "/ct/v1/add-json", AddJSONResp)
-	defer hs.Close()
-	lc, err := client.New(hs.URL, &http.Client{}, jsonclient.Options{})
-	if err != nil {
-		t.Fatalf("Failed to create client: %v", err)
-	}
-
-	tests := []struct {
-		success bool
-		data    interface{}
-	}{
-		{true, struct{ hi string }{"bob"}},
-	}
-
-	for _, test := range tests {
-		sct, err := lc.AddJSON(context.Background(), test.data)
-		if test.success && err != nil {
-			t.Errorf("AddJSON(%v)=nil,%v; want sct,nil", test.data, err)
-		} else if !test.success && err == nil {
-			t.Errorf("AddJSON(%v)=sct,nil; want nil,error", test.data)
-		}
-		if test.success && sct == nil {
-			t.Errorf("AddJSON(%v)=nil,%v; want sct,nil", test.data, err)
-		}
 	}
 }
 

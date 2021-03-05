@@ -1,4 +1,4 @@
-// Copyright 2016 Google Inc. All Rights Reserved.
+// Copyright 2016 Google LLC. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,21 +27,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
-	etcdnaming "github.com/coreos/etcd/clientv3/naming"
 	"github.com/golang/glog"
 	"github.com/google/certificate-transparency-go/trillian/ctfe"
 	"github.com/google/certificate-transparency-go/trillian/ctfe/configpb"
-	"github.com/google/certificate-transparency-go/trillian/util"
 	"github.com/google/trillian"
 	"github.com/google/trillian/monitoring/opencensus"
 	"github.com/google/trillian/monitoring/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
 	"github.com/tomasen/realip"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/naming/endpoints"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/balancer/roundrobin"
-	"google.golang.org/grpc/naming"
+	"google.golang.org/grpc/resolver"
+	"google.golang.org/grpc/resolver/manual"
 
 	// Register PEMKeyFile, PrivateKey and PKCS11Config ProtoHandlers
 	_ "github.com/google/trillian/crypto/keys/der/proto"
@@ -120,30 +121,43 @@ func main() {
 		if err != nil {
 			glog.Exitf("Failed to connect to etcd at %v: %v", *etcdServers, err)
 		}
-		etcdRes := &etcdnaming.GRPCResolver{Client: client}
-		dialOpts = append(dialOpts, grpc.WithBalancer(grpc.RoundRobin(etcdRes)))
 
-		// Also announce ourselves.
-		updateHTTP := naming.Update{Op: naming.Add, Addr: *httpEndpoint}
-		updateMetrics := naming.Update{Op: naming.Add, Addr: metricsAt}
-		glog.Infof("Announcing our presence in %v with %+v", *etcdHTTPService, updateHTTP)
-		etcdRes.Update(ctx, *etcdHTTPService, updateHTTP)
-		glog.Infof("Announcing our presence in %v with %+v", *etcdMetricsService, updateMetrics)
-		etcdRes.Update(ctx, *etcdMetricsService, updateMetrics)
+		httpManager, err := endpoints.NewManager(client, *etcdHTTPService)
+		if err != nil {
+			glog.Exitf("Failed to create etcd http manager: %v", err)
+		}
+		metricsManager, err := endpoints.NewManager(client, *etcdMetricsService)
+		if err != nil {
+			glog.Exitf("Failed to create etcd metrics manager: %v", err)
+		}
 
-		byeHTTP := naming.Update{Op: naming.Delete, Addr: *httpEndpoint}
-		byeMetrics := naming.Update{Op: naming.Delete, Addr: metricsAt}
+		etcdHTTPKey := fmt.Sprintf("%s/%s", *etcdHTTPService, *httpEndpoint)
+		glog.Infof("Announcing our presence at %v with %+v", etcdHTTPKey, *httpEndpoint)
+		httpManager.AddEndpoint(ctx, etcdHTTPKey, endpoints.Endpoint{Addr: *httpEndpoint})
+
+		etcdMetricsKey := fmt.Sprintf("%s/%s", *etcdMetricsService, metricsAt)
+		glog.Infof("Announcing our presence in %v with %+v", *etcdMetricsService, metricsAt)
+		metricsManager.AddEndpoint(ctx, etcdMetricsKey, endpoints.Endpoint{Addr: metricsAt})
+
 		defer func() {
-			glog.Infof("Removing our presence in %v with %+v", *etcdHTTPService, byeHTTP)
-			etcdRes.Update(ctx, *etcdHTTPService, byeHTTP)
-			glog.Infof("Removing our presence in %v with %+v", *etcdMetricsService, byeMetrics)
-			etcdRes.Update(ctx, *etcdMetricsService, byeMetrics)
+			glog.Infof("Removing our presence in %v", etcdHTTPKey)
+			httpManager.DeleteEndpoint(ctx, etcdHTTPKey)
+			glog.Infof("Removing our presence in %v", etcdMetricsKey)
+			metricsManager.DeleteEndpoint(ctx, etcdMetricsKey)
 		}()
 	} else if strings.Contains(*rpcBackend, ",") {
-		glog.Infof("Using FixedBackendResolver")
-		// Use a fixed endpoint resolution that just returns the addresses configured on the command line.
-		res := util.FixedBackendResolver{}
-		dialOpts = append(dialOpts, grpc.WithBalancer(grpc.RoundRobin(res)))
+		// This should probably not be used in production. Either use etcd or a gRPC
+		// load balancer. It's only used by the integration tests.
+		glog.Warning("Multiple RPC backends from flags not recommended for production. Should probably be using etcd or a gRPC load balancer / proxy.")
+		res := manual.NewBuilderWithScheme("whatever")
+		backends := strings.Split(*rpcBackend, ",")
+		addrs := make([]resolver.Address, 0, len(backends))
+		for _, backend := range backends {
+			addrs = append(addrs, resolver.Address{Addr: backend, Type: resolver.Backend})
+		}
+		res.InitialState(resolver.State{Addresses: addrs})
+		resolver.SetDefaultScheme(res.Scheme())
+		dialOpts = append(dialOpts, grpc.WithBalancerName(roundrobin.Name), grpc.WithResolvers(res))
 	} else {
 		glog.Infof("Using regular DNS resolver")
 		dialOpts = append(dialOpts, grpc.WithBalancerName(roundrobin.Name))

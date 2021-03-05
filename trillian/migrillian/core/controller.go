@@ -1,4 +1,4 @@
-// Copyright 2018 Google Inc. All Rights Reserved.
+// Copyright 2018 Google LLC. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,8 +30,8 @@ import (
 	"github.com/google/certificate-transparency-go/scanner"
 	"github.com/google/certificate-transparency-go/trillian/migrillian/configpb"
 
-	"github.com/google/trillian/merkle"
-	_ "github.com/google/trillian/merkle/rfc6962" // Register hasher.
+	"github.com/google/trillian/merkle/logverifier"
+	"github.com/google/trillian/merkle/rfc6962/hasher"
 	"github.com/google/trillian/monitoring"
 	"github.com/google/trillian/types"
 	"github.com/google/trillian/util/clock"
@@ -129,7 +129,7 @@ func NewController(
 	mf monitoring.MetricFactory,
 ) *Controller {
 	initMetrics(mf)
-	l := strconv.FormatInt(plClient.tree.TreeId, 10)
+	l := strconv.FormatInt(plClient.treeID, 10)
 	return &Controller{opts: opts, ctClient: ctClient, plClient: plClient, ef: ef, label: l}
 }
 
@@ -137,7 +137,7 @@ func NewController(
 // configured with continuous mode, restarts it whenever it returns.
 func (c *Controller) RunWhenMasterWithRestarts(ctx context.Context) {
 	uri := c.ctClient.BaseURI()
-	treeID := c.plClient.tree.TreeId
+	treeID := c.plClient.treeID
 	for run := true; run; run = c.opts.Continuous && ctx.Err() == nil {
 		glog.Infof("Starting migration Controller (%d<-%q)", treeID, uri)
 		if err := c.RunWhenMaster(ctx); err != nil {
@@ -263,7 +263,7 @@ func (c *Controller) Run(ctx context.Context) error {
 // with respect to the passed in minimal position to start from, and the
 // current tree size obtained from an STH.
 func (c *Controller) fetchTail(ctx context.Context, begin uint64) (uint64, error) {
-	root, err := c.plClient.getVerifiedRoot(ctx)
+	root, err := c.plClient.getRoot(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -341,7 +341,7 @@ func (c *Controller) verifyConsistency(ctx context.Context, root *types.LogRootV
 	if err != nil {
 		return err
 	}
-	return merkle.NewLogVerifier(c.plClient.verif.Hasher).VerifyConsistencyProof(
+	return logverifier.New(hasher.DefaultHasher).VerifyConsistencyProof(
 		int64(root.TreeSize), int64(sth.TreeSize),
 		root.RootHash, sth.SHA256RootHash[:], proof)
 }

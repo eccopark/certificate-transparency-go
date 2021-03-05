@@ -1,4 +1,4 @@
-// Copyright 2018 Google Inc. All Rights Reserved.
+// Copyright 2018 Google LLC. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,9 +21,15 @@ import (
 
 	"github.com/golang/glog"
 	ct "github.com/google/certificate-transparency-go"
-	"github.com/google/certificate-transparency-go/client"
 	"github.com/google/trillian/client/backoff"
 )
+
+// LogClient implements the subset of CT log API that the Fetcher uses.
+type LogClient interface {
+	BaseURI() string
+	GetSTH(context.Context) (*ct.SignedTreeHead, error)
+	GetRawEntries(ctx context.Context, start, end int64) (*ct.GetEntriesResponse, error)
+}
 
 // FetcherOptions holds configuration options for the Fetcher.
 type FetcherOptions struct {
@@ -59,7 +65,7 @@ type Fetcher struct {
 	// Base URI of the CT log, for diagnostics.
 	uri string
 	// Client used to talk to the CT log instance.
-	client *client.LogClient
+	client LogClient
 	// Configuration options for this Fetcher instance.
 	opts *FetcherOptions
 
@@ -87,7 +93,7 @@ type fetchRange struct {
 
 // NewFetcher creates a Fetcher instance using client to talk to the log,
 // taking configuration options from opts.
-func NewFetcher(client *client.LogClient, opts *FetcherOptions) *Fetcher {
+func NewFetcher(client LogClient, opts *FetcherOptions) *Fetcher {
 	cancel := func() {} // Protect against calling Stop before Run.
 	return &Fetcher{
 		uri:    client.BaseURI(),
@@ -257,15 +263,26 @@ func (f *Fetcher) runWorker(ctx context.Context, ranges <-chan fetchRange, fn fu
 		// Logs MAY return fewer than the number of leaves requested. Only complete
 		// if we actually got all the leaves we were expecting.
 		for r.start <= r.end {
-			// Fetcher.Run() can be cancelled while we are looping over this job.
-			if err := ctx.Err(); err != nil {
-				glog.Warningf("%s: Worker context closed: %v", f.uri, err)
-				return
+			// TODO(pavelkalinnikov): Make these parameters tunable.
+			// This backoff will only apply to a single request and be reset for the next one.
+			// This precludes reaching some kind of stability in request rate, but means that
+			// an intermittent problem won't harm long-term running of the worker.
+			bo := &backoff.Backoff{
+				Min:    1 * time.Second,
+				Max:    30 * time.Second,
+				Factor: 2,
+				Jitter: true,
 			}
-			resp, err := f.client.GetRawEntries(ctx, r.start, r.end)
-			if err != nil {
+
+			var resp *ct.GetEntriesResponse
+			// TODO(pavelkalinnikov): Report errors in a LogClient decorator on failure.
+			if err := bo.Retry(ctx, func() error {
+				var err error
+				resp, err = f.client.GetRawEntries(ctx, r.start, r.end)
+				return err
+			}); err != nil {
 				glog.Errorf("%s: GetRawEntries() failed: %v", f.uri, err)
-				// TODO(pavelkalinnikov): Introduce backoff policy and pause here.
+				// There is no error reporting yet for this worker, so just retry again.
 				continue
 			}
 			fn(EntryBatch{Start: r.start, Entries: resp.Entries})

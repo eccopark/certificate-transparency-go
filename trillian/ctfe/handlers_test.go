@@ -1,4 +1,4 @@
-// Copyright 2016 Google Inc. All Rights Reserved.
+// Copyright 2016 Google LLC. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,7 +34,6 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/golang/mock/gomock"
-	"github.com/golang/protobuf/proto"
 	"github.com/google/certificate-transparency-go/tls"
 	"github.com/google/certificate-transparency-go/trillian/mockclient"
 	"github.com/google/certificate-transparency-go/trillian/testdata"
@@ -50,6 +49,7 @@ import (
 	"github.com/kylelemons/godebug/pretty"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	ct "github.com/google/certificate-transparency-go"
 	"github.com/google/certificate-transparency-go/trillian/ctfe/configpb"
@@ -161,7 +161,6 @@ func setupTest(t *testing.T, pemRoots []string, signer crypto.Signer) handlerTes
 	vOpts := CertValidationOpts{
 		trustedRoots:  info.roots,
 		rejectExpired: false,
-		extKeyUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	}
 
 	cfg := &configpb.LogConfig{LogId: 0x42, Prefix: "test", IsMirror: false}
@@ -364,7 +363,7 @@ func TestAddChainWhitespace(t *testing.T) {
 	chunk2 := "\"MIIDnTCCAoWgAwIBAgIIQoIqW4Zvv+swDQYJKoZIhvcNAQELBQAwcTELMAkGA1UEBhMCR0IxDzANBgNVBAgMBkxvbmRvbjEPMA0GA1UEBwwGTG9uZG9uMQ8wDQYDVQQKDAZHb29nbGUxDDAKBgNVBAsMA0VuZzEhMB8GA1UEAwwYRmFrZUNlcnRpZmljYXRlQXV0aG9yaXR5MB4XDTE2MDUxMzE0MjY0NFoXDTE5MDcxMjE0MjY0NFowcjELMAkGA1UEBhMCR0IxDzANBgNVBAgMBkxvbmRvbjEPMA0GA1UEBwwGTG9uZG9uMQ8wDQYDVQQKDAZHb29nbGUxDDAKBgNVBAsMA0VuZzEiMCAGA1UEAwwZRmFrZUludGVybWVkaWF0ZUF1dGhvcml0eTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMqkDHpt6SYi1GcZyClAxr3LRDnn+oQBHbMEFUg3+lXVmEsq/xQO1s4naynV6I05676XvlMh0qPyJ+9GaBxvhHeFtGh4etQ9UEmJj55rSs50wA/IaDh+roKukQxthyTESPPgjqg+DPjh6H+h3Sn00Os6sjh3DxpOphTEsdtb7fmk8J0e2KjQQCjW/GlECzc359b9KbBwNkcAiYFayVHPLaCAdvzYVyiHgXHkEEs5FlHyhe2gNEG/81Io8c3E3DH5JhT9tmVRL3bpgpT8Kr4aoFhU2LXe45YIB1A9DjUm5TrHZ+iNtvE0YfYMR9L9C1HPppmX1CahEhTdog7laE1198UCAwEAAaM4MDYwDwYDVR0jBAgwBoAEAQIDBDASBgNVHRMBAf8ECDAGAQH/AgEAMA8GA1UdDwEB/wQFAwMH/4AwDQYJKoZIhvcNAQELBQADggEBAAHiOgwAvEzhrNMQVAz8a+SsyMIABXQ5P8WbJeHjkIipE4+5ZpkrZVXq9p8wOdkYnOHx4WNi9PVGQbLG9Iufh9fpk8cyyRWDi+V20/CNNtawMq3ClV3dWC98Tj4WX/BXDCeY2jK4jYGV+ds43HYV0ToBmvvrccq/U7zYMGFcQiKBClz5bTE+GMvrZWcO5A/Lh38i2YSF1i8SfDVnAOBlAgZmllcheHpGsWfSnduIllUvTsRvEIsaaqfVLl5QpRXBOq8tbjK85/2g6ear1oxPhJ1w9hds+WTFXkmHkWvKJebY13t3OfSjAyhaRSt8hdzDzHTFwjPjHT8h6dU7/hMdkUg=\""
 	epilog := "]}\n"
 
-	// Which (if successful) produces a QueueLeaves response with a Merkle leaf:
+	// Which (if successful) produces a QueueLeaf response with a Merkle leaf:
 	pool := loadCertsIntoPoolOrDie(t, pemChain)
 	merkleLeaf, err := ct.MerkleTreeLeafFromChain(pool.RawCertificates(), ct.X509LogEntryType, fakeTimeMillis)
 	if err != nil {
@@ -374,16 +373,13 @@ func TestAddChainWhitespace(t *testing.T) {
 	fullChain := make([]*x509.Certificate, len(pemChain)+1)
 	copy(fullChain, pool.RawCertificates())
 	fullChain[len(pemChain)] = info.roots.RawCertificates()[0]
-	leaves := logLeavesForCert(t, fullChain, merkleLeaf, false)
-	queuedLeaves := make([]*trillian.QueuedLogLeaf, len(leaves))
-	for i, leaf := range leaves {
-		queuedLeaves[i] = &trillian.QueuedLogLeaf{
-			Leaf:   leaf,
-			Status: status.New(codes.OK, "ok").Proto(),
-		}
+	leaf := logLeafForCert(t, fullChain, merkleLeaf, false)
+	queuedLeaf := &trillian.QueuedLogLeaf{
+		Leaf:   leaf,
+		Status: status.New(codes.OK, "ok").Proto(),
 	}
-	rsp := trillian.QueueLeavesResponse{QueuedLeaves: queuedLeaves}
-	req := &trillian.QueueLeavesRequest{LogId: 0x42, Leaves: leaves}
+	rsp := trillian.QueueLeafResponse{QueuedLeaf: queuedLeaf}
+	req := &trillian.QueueLeafRequest{LogId: 0x42, Leaf: leaf}
 
 	var tests = []struct {
 		descr string
@@ -420,7 +416,7 @@ func TestAddChainWhitespace(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.descr, func(t *testing.T) {
 			if test.want == http.StatusOK {
-				info.client.EXPECT().QueueLeaves(deadlineMatcher(), cmpMatcher{req}).Return(&rsp, nil)
+				info.client.EXPECT().QueueLeaf(deadlineMatcher(), cmpMatcher{req}).Return(&rsp, nil)
 			}
 
 			recorder := httptest.NewRecorder()
@@ -542,20 +538,17 @@ func TestAddChain(t *testing.T) {
 					fullChain[len(leafChain)] = root
 					leafChain = fullChain
 				}
-				leaves := logLeavesForCert(t, leafChain, merkleLeaf, false)
-				queuedLeaves := make([]*trillian.QueuedLogLeaf, len(leaves))
-				for i, leaf := range leaves {
-					queuedLeaves[i] = &trillian.QueuedLogLeaf{
-						Leaf:   leaf,
-						Status: status.New(codes.OK, "ok").Proto(),
-					}
+				leaf := logLeafForCert(t, leafChain, merkleLeaf, false)
+				queuedLeaf := &trillian.QueuedLogLeaf{
+					Leaf:   leaf,
+					Status: status.New(codes.OK, "ok").Proto(),
 				}
-				rsp := trillian.QueueLeavesResponse{QueuedLeaves: queuedLeaves}
-				req := &trillian.QueueLeavesRequest{LogId: 0x42, Leaves: leaves}
+				rsp := trillian.QueueLeafResponse{QueuedLeaf: queuedLeaf}
+				req := &trillian.QueueLeafRequest{LogId: 0x42, Leaf: leaf}
 				if len(test.wantQuotaUsers) > 0 {
 					req.ChargeTo = &trillian.ChargeTo{User: test.wantQuotaUsers}
 				}
-				info.client.EXPECT().QueueLeaves(deadlineMatcher(), cmpMatcher{req}).Return(&rsp, test.err)
+				info.client.EXPECT().QueueLeaf(deadlineMatcher(), cmpMatcher{req}).Return(&rsp, test.err)
 			}
 
 			recorder := makeAddChainRequest(t, info.li, chain)
@@ -667,20 +660,17 @@ func TestAddPrechain(t *testing.T) {
 					fullChain[len(leafChain)] = root
 					leafChain = fullChain
 				}
-				leaves := logLeavesForCert(t, leafChain, merkleLeaf, true)
-				queuedLeaves := make([]*trillian.QueuedLogLeaf, len(leaves))
-				for i, leaf := range leaves {
-					queuedLeaves[i] = &trillian.QueuedLogLeaf{
-						Leaf:   leaf,
-						Status: status.New(codes.OK, "ok").Proto(),
-					}
+				leaf := logLeafForCert(t, leafChain, merkleLeaf, true)
+				queuedLeaf := &trillian.QueuedLogLeaf{
+					Leaf:   leaf,
+					Status: status.New(codes.OK, "ok").Proto(),
 				}
-				rsp := trillian.QueueLeavesResponse{QueuedLeaves: queuedLeaves}
-				req := &trillian.QueueLeavesRequest{LogId: 0x42, Leaves: leaves}
+				rsp := trillian.QueueLeafResponse{QueuedLeaf: queuedLeaf}
+				req := &trillian.QueueLeafRequest{LogId: 0x42, Leaf: leaf}
 				if len(test.wantQuotaUser) != 0 {
 					req.ChargeTo = &trillian.ChargeTo{User: []string{test.wantQuotaUser}}
 				}
-				info.client.EXPECT().QueueLeaves(deadlineMatcher(), cmpMatcher{req}).Return(&rsp, test.err)
+				info.client.EXPECT().QueueLeaf(deadlineMatcher(), cmpMatcher{req}).Return(&rsp, test.err)
 			}
 
 			recorder := makeAddPrechainRequest(t, info.li, chain)
@@ -826,7 +816,7 @@ func TestGetSTH(t *testing.T) {
 	}
 }
 
-func runTestGetEntries(t *testing.T) {
+func TestGetEntries(t *testing.T) {
 	// Create a couple of valid serialized ct.MerkleTreeLeaf objects
 	merkleLeaf1 := ct.MerkleTreeLeaf{
 		Version:  ct.V1,
@@ -859,7 +849,6 @@ func runTestGetEntries(t *testing.T) {
 		req           string
 		want          int
 		wantQuotaUser string
-		glbir         *trillian.GetLeavesByIndexRequest
 		glbrr         *trillian.GetLeavesByRangeRequest
 		leaves        []*trillian.LogLeaf
 		rpcErr        error
@@ -914,7 +903,6 @@ func runTestGetEntries(t *testing.T) {
 			slr: &trillian.SignedLogRoot{
 				LogRoot: []byte("not tls encoded data"),
 			},
-			glbir:  &trillian.GetLeavesByIndexRequest{LogId: 0x42, LeafIndex: []int64{2, 3}},
 			glbrr:  &trillian.GetLeavesByRangeRequest{LogId: 0x42, StartIndex: 2, Count: 2},
 			want:   http.StatusInternalServerError,
 			leaves: []*trillian.LogLeaf{{LeafIndex: 2}, {LeafIndex: 3}},
@@ -926,7 +914,6 @@ func runTestGetEntries(t *testing.T) {
 			slr: mustMarshalRoot(t, &types.LogRootV1{
 				TreeSize: 2, // Not large enough - only indices 0 and 1 valid.
 			}),
-			glbir:  &trillian.GetLeavesByIndexRequest{LogId: 0x42, LeafIndex: []int64{2, 3}},
 			glbrr:  &trillian.GetLeavesByRangeRequest{LogId: 0x42, StartIndex: 2, Count: 2},
 			want:   http.StatusBadRequest,
 			leaves: []*trillian.LogLeaf{{LeafIndex: 2}, {LeafIndex: 3}},
@@ -984,7 +971,6 @@ func runTestGetEntries(t *testing.T) {
 		{
 			descr: "tree too small",
 			req:   "start=5&end=6",
-			glbir: &trillian.GetLeavesByIndexRequest{LogId: 0x42, LeafIndex: []int64{5, 6}},
 			glbrr: &trillian.GetLeavesByRangeRequest{LogId: 0x42, StartIndex: 5, Count: 2},
 			want:  http.StatusBadRequest,
 			slr: mustMarshalRoot(t, &types.LogRootV1{
@@ -995,7 +981,6 @@ func runTestGetEntries(t *testing.T) {
 		{
 			descr: "tree includes 1 of 2",
 			req:   "start=5&end=6",
-			glbir: &trillian.GetLeavesByIndexRequest{LogId: 0x42, LeafIndex: []int64{5, 6}},
 			glbrr: &trillian.GetLeavesByRangeRequest{LogId: 0x42, StartIndex: 5, Count: 2},
 			want:  http.StatusOK,
 			slr: mustMarshalRoot(t, &types.LogRootV1{
@@ -1008,7 +993,6 @@ func runTestGetEntries(t *testing.T) {
 		{
 			descr: "tree includes 2 of 2",
 			req:   "start=5&end=6",
-			glbir: &trillian.GetLeavesByIndexRequest{LogId: 0x42, LeafIndex: []int64{5, 6}},
 			glbrr: &trillian.GetLeavesByRangeRequest{LogId: 0x42, StartIndex: 5, Count: 2},
 			want:  http.StatusOK,
 			slr: mustMarshalRoot(t, &types.LogRootV1{
@@ -1040,21 +1024,12 @@ func runTestGetEntries(t *testing.T) {
 			if len(test.wantQuotaUser) != 0 {
 				chargeTo = &trillian.ChargeTo{User: []string{test.wantQuotaUser}}
 			}
-			if *getByRange {
-				glbrr := &trillian.GetLeavesByRangeRequest{LogId: 0x42, StartIndex: 1, Count: 2, ChargeTo: chargeTo}
-				if test.glbrr != nil {
-					glbrr = test.glbrr
-				}
-				rsp := trillian.GetLeavesByRangeResponse{SignedLogRoot: slr, Leaves: test.leaves}
-				info.client.EXPECT().GetLeavesByRange(deadlineMatcher(), cmpMatcher{glbrr}).Return(&rsp, test.rpcErr)
-			} else {
-				glbir := &trillian.GetLeavesByIndexRequest{LogId: 0x42, LeafIndex: []int64{1, 2}, ChargeTo: chargeTo}
-				if test.glbir != nil {
-					glbir = test.glbir
-				}
-				rsp := trillian.GetLeavesByIndexResponse{SignedLogRoot: slr, Leaves: test.leaves}
-				info.client.EXPECT().GetLeavesByIndex(deadlineMatcher(), cmpMatcher{glbir}).Return(&rsp, test.rpcErr)
+			glbrr := &trillian.GetLeavesByRangeRequest{LogId: 0x42, StartIndex: 1, Count: 2, ChargeTo: chargeTo}
+			if test.glbrr != nil {
+				glbrr = test.glbrr
 			}
+			rsp := trillian.GetLeavesByRangeResponse{SignedLogRoot: slr, Leaves: test.leaves}
+			info.client.EXPECT().GetLeavesByRange(deadlineMatcher(), cmpMatcher{glbrr}).Return(&rsp, test.rpcErr)
 		}
 
 		w := httptest.NewRecorder()
@@ -1101,7 +1076,7 @@ func runTestGetEntries(t *testing.T) {
 	}
 }
 
-func runTestGetEntriesRanges(t *testing.T) {
+func TestGetEntriesRanges(t *testing.T) {
 	var tests = []struct {
 		desc          string
 		start         int64
@@ -1208,11 +1183,7 @@ func runTestGetEntriesRanges(t *testing.T) {
 				if len(test.wantQuotaUser) != 0 {
 					chargeTo = &trillian.ChargeTo{User: []string{test.wantQuotaUser}}
 				}
-				if *getByRange {
-					info.client.EXPECT().GetLeavesByRange(deadlineMatcher(), cmpMatcher{&trillian.GetLeavesByRangeRequest{LogId: 0x42, StartIndex: test.start, Count: end + 1 - test.start, ChargeTo: chargeTo}}).Return(nil, errors.New("RPCMADE"))
-				} else {
-					info.client.EXPECT().GetLeavesByIndex(deadlineMatcher(), cmpMatcher{&trillian.GetLeavesByIndexRequest{LogId: 0x42, LeafIndex: buildIndicesForRange(test.start, end), ChargeTo: chargeTo}}).Return(nil, errors.New("RPCMADE"))
-				}
+				info.client.EXPECT().GetLeavesByRange(deadlineMatcher(), cmpMatcher{&trillian.GetLeavesByRangeRequest{LogId: 0x42, StartIndex: test.start, Count: end + 1 - test.start, ChargeTo: chargeTo}}).Return(nil, errors.New("RPCMADE"))
 			}
 
 			path := fmt.Sprintf("/ct/v1/get-entries?start=%d&end=%d", test.start, test.end)
@@ -1231,67 +1202,6 @@ func runTestGetEntriesRanges(t *testing.T) {
 				t.Errorf("getEntries(%d, %d)=%q; expect RPCMADE for test %s", test.start, test.end, w.Body, test.desc)
 			}
 		})
-	}
-}
-
-func runGetEntriesVariants(t *testing.T, fn func(t *testing.T)) {
-	t.Helper()
-	defer func(val bool) {
-		*getByRange = val
-	}(*getByRange)
-	for _, val := range []bool{false, true} {
-		*getByRange = val
-		name := "ByIndex"
-		if *getByRange {
-			name = "ByName"
-		}
-		t.Run(name, fn)
-	}
-}
-
-func TestGetEntriesRanges(t *testing.T) {
-	runGetEntriesVariants(t, runTestGetEntriesRanges)
-}
-
-func TestGetEntries(t *testing.T) {
-	runGetEntriesVariants(t, runTestGetEntries)
-}
-
-func TestSortLeafRange(t *testing.T) {
-	var tests = []struct {
-		start   int64
-		end     int64
-		entries []int
-		errStr  string
-	}{
-		{1, 2, []int{1, 2}, ""},
-		{1, 1, []int{1}, ""},
-		{5, 12, []int{5, 6, 7, 8, 9, 10, 11, 12}, ""},
-		{5, 12, []int{5, 6, 7, 8, 9, 10}, ""},
-		{5, 12, []int{7, 6, 8, 9, 10, 5}, ""},
-		{5, 12, []int{5, 5, 6, 7, 8, 9, 10}, "unexpected leaf index"},
-		{5, 12, []int{6, 7, 8, 9, 10, 11, 12}, "unexpected leaf index"},
-		{5, 12, []int{5, 6, 7, 8, 9, 10, 12}, "unexpected leaf index"},
-		{5, 12, []int{5, 6, 7, 8, 9, 10, 11, 12, 13}, "too many leaves"},
-		{1, 4, []int{5, 2, 3}, "unexpected leaf index"},
-	}
-	for _, test := range tests {
-		rsp := trillian.GetLeavesByIndexResponse{}
-		for _, idx := range test.entries {
-			rsp.Leaves = append(rsp.Leaves, &trillian.LogLeaf{LeafIndex: int64(idx)})
-		}
-		err := sortLeafRange(&rsp, test.start, test.end)
-		if test.errStr != "" {
-			if err == nil {
-				t.Errorf("sortLeafRange(%v, %d, %d)=nil; want substring %q", test.entries, test.start, test.end, test.errStr)
-			} else if !strings.Contains(err.Error(), test.errStr) {
-				t.Errorf("sortLeafRange(%v, %d, %d)=%v; want substring %q", test.entries, test.start, test.end, err, test.errStr)
-			}
-			continue
-		}
-		if err != nil {
-			t.Errorf("sortLeafRange(%v, %d, %d)=%v; want nil", test.entries, test.start, test.end, err)
-		}
 	}
 }
 
@@ -2283,7 +2193,7 @@ func createJSONChain(t *testing.T, p PEMCertPool) io.Reader {
 	return bufio.NewReader(&buffer)
 }
 
-func logLeavesForCert(t *testing.T, certs []*x509.Certificate, merkleLeaf *ct.MerkleTreeLeaf, isPrecert bool) []*trillian.LogLeaf {
+func logLeafForCert(t *testing.T, certs []*x509.Certificate, merkleLeaf *ct.MerkleTreeLeaf, isPrecert bool) *trillian.LogLeaf {
 	t.Helper()
 	leafData, err := tls.Marshal(*merkleLeaf)
 	if err != nil {
@@ -2298,7 +2208,7 @@ func logLeavesForCert(t *testing.T, certs []*x509.Certificate, merkleLeaf *ct.Me
 		t.Fatalf("failed to serialize extra data: %v", err)
 	}
 
-	return []*trillian.LogLeaf{{LeafIdentityHash: leafIDHash[:], LeafValue: leafData, ExtraData: extraData}}
+	return &trillian.LogLeaf{LeafIdentityHash: leafIDHash[:], LeafValue: leafData, ExtraData: extraData}
 }
 
 type dlMatcher struct {

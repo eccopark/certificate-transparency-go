@@ -1,4 +1,4 @@
-// Copyright 2015 Google Inc. All Rights Reserved.
+// Copyright 2015 Google LLC. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,7 +38,6 @@ type LogEntryType tls.Enum // tls:"maxval:65535"
 const (
 	X509LogEntryType    LogEntryType = 0
 	PrecertLogEntryType LogEntryType = 1
-	XJSONLogEntryType   LogEntryType = 0x8000 // Experimental.  Don't rely on this!
 )
 
 func (e LogEntryType) String() string {
@@ -47,8 +46,6 @@ func (e LogEntryType) String() string {
 		return "X509LogEntryType"
 	case PrecertLogEntryType:
 		return "PrecertLogEntryType"
-	case XJSONLogEntryType:
-		return "XJSONLogEntryType"
 	default:
 		return fmt.Sprintf("UnknownEntryType(%d)", e)
 	}

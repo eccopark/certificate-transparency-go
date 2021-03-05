@@ -1,4 +1,4 @@
-// Copyright 2016 Google Inc. All Rights Reserved.
+// Copyright 2016 Google LLC. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,8 +45,8 @@ import (
 	"github.com/google/certificate-transparency-go/x509/pkix"
 	"github.com/google/trillian"
 	"github.com/google/trillian/crypto/keyspb"
-	"github.com/google/trillian/merkle"
-	"github.com/google/trillian/merkle/rfc6962"
+	"github.com/google/trillian/merkle/logverifier"
+	"github.com/google/trillian/merkle/rfc6962/hasher"
 	"github.com/kylelemons/godebug/pretty"
 	"golang.org/x/net/context/ctxhttp"
 	"google.golang.org/genproto/protobuf/field_mask"
@@ -126,7 +126,7 @@ type testInfo struct {
 	adminServer    string
 	stats          *logStats
 	pool           ClientPool
-	verifier       merkle.LogVerifier
+	verifier       logverifier.LogVerifier
 }
 
 func (t *testInfo) checkStats() error {
@@ -266,7 +266,7 @@ func RunCTIntegrationForLog(cfg *configpb.LogConfig, servers, metricsServers, te
 		metricsServers: metricsServers,
 		stats:          stats,
 		pool:           pool,
-		verifier:       merkle.NewLogVerifier(rfc6962.DefaultHasher),
+		verifier:       logverifier.New(hasher.DefaultHasher),
 	}
 
 	if err := t.checkStats(); err != nil {
@@ -632,7 +632,7 @@ func RunCTLifecycleForLog(cfg *configpb.LogConfig, servers, metricsServers, admi
 		adminServer:    adminServer,
 		stats:          stats,
 		pool:           pool,
-		verifier:       merkle.NewLogVerifier(rfc6962.DefaultHasher),
+		verifier:       logverifier.New(hasher.DefaultHasher),
 	}
 
 	if err := t.checkStats(); err != nil {

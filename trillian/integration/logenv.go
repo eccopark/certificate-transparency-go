@@ -1,4 +1,4 @@
-// Copyright 2017 Google Inc. All Rights Reserved.
+// Copyright 2017 Google LLC. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -58,7 +58,7 @@ func NewCTLogEnv(ctx context.Context, cfgs []*configpb.LogConfig, numSequencers 
 	for _, cfg := range cfgs {
 		tree, err := client.CreateAndInitTree(ctx,
 			&trillian.CreateTreeRequest{Tree: stestonly.LogTree},
-			logEnv.Admin, nil, logEnv.Log)
+			logEnv.Admin, logEnv.Log)
 		if err != nil {
 			return nil, fmt.Errorf("failed to provision log %d: %v", cfg.LogId, err)
 		}

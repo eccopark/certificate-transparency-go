@@ -1,4 +1,4 @@
-// Copyright 2018 Google Inc. All Rights Reserved.
+// Copyright 2018 Google LLC. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,9 +28,7 @@ import (
 	"github.com/google/certificate-transparency-go/trillian/migrillian/configpb"
 	"github.com/google/certificate-transparency-go/x509"
 	"github.com/google/trillian"
-	"github.com/google/trillian/client"
 	"github.com/google/trillian/client/backoff"
-	"github.com/google/trillian/crypto"
 	"github.com/google/trillian/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -42,8 +40,7 @@ var errRetry = errors.New("retry")
 // pre-ordered log tree.
 type PreorderedLogClient struct {
 	cli    trillian.TrillianLogClient
-	verif  *client.LogVerifier
-	tree   *trillian.Tree
+	treeID int64
 	idFunc func(int64, *ct.RawLogEntry) []byte
 	prefix string // TODO(pavelkalinnikov): Get rid of this.
 }
@@ -61,11 +58,10 @@ func NewPreorderedLogClient(
 	if got, want := tree.TreeType, trillian.TreeType_PREORDERED_LOG; got != want {
 		return nil, fmt.Errorf("tree %d is %v, want %v", tree.TreeId, got, want)
 	}
-	v, err := client.NewLogVerifierFromTree(tree)
-	if err != nil {
-		return nil, err
+	if got, want := tree.GetHashStrategy(), trillian.HashStrategy_RFC6962_SHA256; got != want {
+		return nil, fmt.Errorf("hash strategy is %v, want %v", got, want)
 	}
-	ret := PreorderedLogClient{cli: cli, verif: v, tree: tree, prefix: prefix}
+	ret := PreorderedLogClient{cli: cli, treeID: tree.TreeId, prefix: prefix}
 
 	switch idFuncType {
 	case configpb.IdentityFunction_SHA256_CERT_DATA:
@@ -79,17 +75,20 @@ func NewPreorderedLogClient(
 	return &ret, nil
 }
 
-// getVerifiedRoot returns the current root of the Trillian tree. Verifies the
-// log's signature.
-func (c *PreorderedLogClient) getVerifiedRoot(ctx context.Context) (*types.LogRootV1, error) {
-	req := trillian.GetLatestSignedLogRootRequest{LogId: c.tree.TreeId}
+// getRoot returns the current root of the Trillian tree.
+func (c *PreorderedLogClient) getRoot(ctx context.Context) (*types.LogRootV1, error) {
+	req := trillian.GetLatestSignedLogRootRequest{LogId: c.treeID}
 	rsp, err := c.cli.GetLatestSignedLogRoot(ctx, &req)
 	if err != nil {
 		return nil, err
 	} else if rsp == nil || rsp.SignedLogRoot == nil {
 		return nil, errors.New("missing SignedLogRoot")
 	}
-	return crypto.VerifySignedLogRoot(c.verif.PubKey, c.verif.SigHash, rsp.SignedLogRoot)
+	var logRoot types.LogRootV1
+	if err := logRoot.UnmarshalBinary(rsp.SignedLogRoot.LogRoot); err != nil {
+		return nil, err
+	}
+	return &logRoot, nil
 }
 
 // addSequencedLeaves converts a batch of CT log entries into Trillian log
@@ -108,8 +107,7 @@ func (c *PreorderedLogClient) addSequencedLeaves(ctx context.Context, b *scanner
 			return err
 		}
 	}
-	treeID := c.tree.TreeId
-	req := trillian.AddSequencedLeavesRequest{LogId: treeID, Leaves: leaves}
+	req := trillian.AddSequencedLeavesRequest{LogId: c.treeID, Leaves: leaves}
 
 	// TODO(pavelkalinnikov): Make this strategy configurable.
 	bo := backoff.Backoff{
@@ -126,7 +124,7 @@ func (c *PreorderedLogClient) addSequencedLeaves(ctx context.Context, b *scanner
 		switch status.Code(err) {
 		case codes.ResourceExhausted: // There was (probably) a quota error.
 			end := b.Start + int64(len(b.Entries))
-			glog.Errorf("%d: retrying batch [%d, %d) due to error: %v", treeID, b.Start, end, err)
+			glog.Errorf("%d: retrying batch [%d, %d) due to error: %v", c.treeID, b.Start, end, err)
 			return errRetry
 		case codes.OK:
 			if rsp == nil {
